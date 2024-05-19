@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: 'Sample SAM Template for Enery AI Assistant
+Description: 'SAM Template for Energy ManagementAI Assistant
 
   '
 Globals:
@@ -219,7 +219,7 @@ Resources:
         ScheduledEvent:
           Type: Schedule
           Properties:
-            Schedule: rate(5 minutes)
+            Schedule: rate(7 days)
     Metadata:
       SamResourceId: WeeklyReportFunction
   ReportSNSTopic:
