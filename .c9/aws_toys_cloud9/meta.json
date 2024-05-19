@@ -1,0 +1,5 @@
+{
+  "id": "aws_toys_cloud9",
+  "configuration": "file:///home/ec2-user/environment/.c9",
+  "name": "aws_toys_cloud9"
+}

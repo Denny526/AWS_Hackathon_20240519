@@ -1,0 +1,10 @@
+version = 0.1
+[default.deploy.parameters]
+stack_name = "sam-app"
+resolve_s3 = true
+s3_prefix = "sam-app"
+region = "us-west-2"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "DataBucket=\"aws-toys-data-input\" BedrockModelId=\"cohere.command-text-v14\" NotificationSNSTopicName=\"sns-data-alert\" ReportSNSTopicName=\"sns-data-report\" NotificationEmail=\"hclien65@gmail.com\" NotiDB=\"email-alert-history\""
+image_repositories = []

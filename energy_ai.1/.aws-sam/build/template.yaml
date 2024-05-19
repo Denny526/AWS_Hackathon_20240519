@@ -1,0 +1,280 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'Sample SAM Template for Enery AI Assistant
+
+  '
+Globals:
+  Function:
+    Runtime: python3.9
+    Timeout: 900
+Parameters:
+  DataBucket:
+    Type: String
+    Default: aws-toys-data-input
+  RCFScoreDB:
+    Description: Notification history will be sent to this DynamoDB
+    Type: String
+    Default: rcf-score-output
+  BedrockModelId:
+    Description: Amazon Bedrock Model Id
+    Type: String
+    Default: cohere.command-text-v14
+  NotificationSNSTopicName:
+    Description: Lambda will send notification email to this SNS topic
+    Type: String
+    Default: sns-data-alert
+  ReportSNSTopicName:
+    Description: Lambda will send notification email to this SNS topic
+    Type: String
+    Default: sns-data-report
+  NotificationEmail:
+    Description: Notification email will be sent to this email address
+    Type: String
+  NotiDB:
+    Description: Notification history will be sent to this DynamoDB
+    Type: String
+    Default: email-alert-history
+Resources:
+  ReportFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+            - scheduler.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: S3ReadPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - s3:*
+            - s3-object-lambda:*
+            Resource: '*'
+      - PolicyName: SNSPublishMessagePolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: sns:*
+            Resource: '*'
+      - PolicyName: LambdaBasicExecutionPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: arn:aws:logs:*:*:*
+      - PolicyName: GeneralPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - s3:*
+            - s3-object-lambda:*
+            - sns:*
+            Resource: '*'
+          - Sid: BedrockAll
+            Effect: Allow
+            Action:
+            - bedrock:*
+            Resource: '*'
+          - Sid: PassRoleToBedrock
+            Effect: Allow
+            Action:
+            - iam:PassRole
+            Resource: arn:aws:iam::*:role/*AmazonBedrock*
+            Condition:
+              StringEquals:
+                iam:PassedToService:
+                - bedrock.amazonaws.com
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+  S3BucketCreation:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Ref: DataBucket
+  RCFScoreTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName:
+        Ref: RCFScoreDB
+      AttributeDefinitions:
+      - AttributeName: Id
+        AttributeType: S
+      KeySchema:
+      - AttributeName: Id
+        KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      SSESpecification:
+        SSEEnabled: false
+  MLFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: rcf_model.rcf
+      CodeUri: MLFunction
+      Role:
+        Fn::GetAtt:
+        - ReportFunctionRole
+        - Arn
+      Environment:
+        Variables:
+          TRAINING_DATA:
+            Ref: S3BucketCreation
+          MODEL_OUTPUT:
+            Ref: RCFScoreTable
+          DATA:
+            Ref: S3BucketCreation
+          SCORE_DATA:
+            Ref: RCFScoreTable
+      Policies:
+      - DynamoDBReadPolicy:
+          TableName:
+            Ref: RCFScoreDB
+    Metadata:
+      SamResourceId: MLFunction
+  LambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: LambdaFunction
+      Handler: app.lambda_handler
+      Environment:
+        Variables:
+          REGION_NAME:
+            Fn::Sub: ${AWS::Region}
+          BEDROCK_MODEL:
+            Ref: BedrockModelId
+          NOTI_TABLE:
+            Ref: NotiDB
+          PARTITION_KEY: JobId
+          SNS_ARN:
+            Ref: NotificationSNSTopic
+          SCORE_DATA:
+            Ref: RCFScoreTable
+      Architectures:
+      - x86_64
+      Policies:
+      - S3ReadPolicy:
+          BucketName:
+            Ref: DataBucket
+      - SNSPublishMessagePolicy:
+          TopicName:
+            Fn::GetAtt:
+            - NotificationSNSTopic
+            - TopicName
+      - DynamoDBReadPolicy:
+          TableName:
+            Ref: NotiDB
+      - Statement:
+        - Action:
+          - s3:*
+          - s3-object-lambda:*
+          - sns:*
+          - dynamodb:*
+          Effect: Allow
+          Resource: '*'
+        - Sid: BedrockAll
+          Effect: Allow
+          Action:
+          - bedrock:*
+          Resource: '*'
+        - Sid: PassRoleToBedrock
+          Effect: Allow
+          Action:
+          - iam:PassRole
+          Resource: arn:aws:iam::*:role/*AmazonBedrock*
+          Condition:
+            StringEquals:
+              iam:PassedToService:
+              - bedrock.amazonaws.com
+      Events:
+        MyS3Event:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: S3BucketCreation
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                - Name: suffix
+                  Value: .csv
+    Metadata:
+      SamResourceId: LambdaFunction
+  NotificationSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName:
+        Ref: NotificationSNSTopicName
+      Subscription:
+      - Protocol: email
+        Endpoint:
+          Ref: NotificationEmail
+  EmailAlertHistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName:
+        Ref: NotiDB
+      AttributeDefinitions:
+      - AttributeName: JobId
+        AttributeType: S
+      KeySchema:
+      - AttributeName: JobId
+        KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      SSESpecification:
+        SSEEnabled: false
+  WeeklyReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: WeeklyReportFunction
+      Handler: weekly_report.gen_weekly_report
+      Description: Generates a weekly report
+      Environment:
+        Variables:
+          REGION_NAME:
+            Fn::Sub: ${AWS::Region}
+          BEDROCK_MODEL:
+            Ref: BedrockModelId
+          S3_BUCKET_NAME:
+            Ref: DataBucket
+          S3_OBJECT_KEY: energy.csv
+          SNS_ARN:
+            Ref: ReportSNSTopic
+      Architectures:
+      - x86_64
+      Role:
+        Fn::GetAtt:
+        - ReportFunctionRole
+        - Arn
+      Events:
+        ScheduledEvent:
+          Type: Schedule
+          Properties:
+            Schedule: rate(7 days)
+    Metadata:
+      SamResourceId: WeeklyReportFunction
+  ReportSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName:
+        Ref: ReportSNSTopicName
+      Subscription:
+      - Protocol: email
+        Endpoint:
+          Ref: NotificationEmail
